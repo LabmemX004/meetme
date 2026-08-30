@@ -9,7 +9,7 @@ window.SUPABASE_URL = "https://exaefyyyupjeusfgvpgg.supabase.co";
 window.SUPABASE_ANON_KEY = "sb_publishable_JVIbiCmCMLRWQ67mkgNOLA_LN9M5XVC";
 
 // 邮件里附的网站地址（部署到 GitHub Pages 后填，如 https://你.github.io/meetme/）
-window.SITE_URL = "";
+window.SITE_URL = "https://labmemx004.github.io/meetme/";
 
 // ===== 邮箱通知（可选）=====
 // 需要按 README 部署 supabase/functions/notify 这个 Edge Function。
