@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>meetme · 双人时间协调</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='42' fill='%23f472b6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <div class="brand">meetme<i></i></div>
+  <nav class="week">
+    <button id="prev" class="navbtn" aria-label="上一周">‹</button>
+    <span id="week-label"></span>
+    <button id="next" class="navbtn" aria-label="下一周">›</button>
+    <button id="today" class="todaylink">本周</button>
+  </nav>
+  <button id="me-chip" class="chip" title="名字与通知邮箱"></button>
+</header>
+
+<div id="banner" hidden></div>
+
+<section class="tools">
+  <div class="seg" id="status-seg">
+    <button id="b-busy" class="on">有事</button>
+    <button id="b-free">没事</button>
+  </div>
+  <button id="b-fixed" class="pill">每周重复</button>
+</section>
+
+<main id="cal">
+  <div id="corner"></div>
+  <div id="dheads"></div>
+  <div id="gutter"></div>
+  <div id="days"></div>
+</main>
+
+<div id="tip" hidden></div>
+
+<!-- 首次使用 -->
+<div id="name-overlay" class="overlay" hidden>
+  <div class="modal small">
+    <h3>你是谁？</h3>
+    <p class="muted">名字用来标记你的色块，对方看得到</p>
+    <input id="name-input" maxlength="12" placeholder="你的名字 / 昵称">
+    <input id="email-input" type="email" placeholder="邮箱（选填，用于收到对方的通知）">
+    <button id="name-ok" class="btn">开始</button>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="app.js"></script>
+</body>
+</html>

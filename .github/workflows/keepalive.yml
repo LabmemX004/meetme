@@ -1,0 +1,17 @@
+# 防止 Supabase 免费项目因 7 天无访问而休眠。
+# 用法：把下面两处 YOUR_XXX 占位符换成 config.js 里的同名字段，然后提交即可。
+# （anon key 本来就是公开的，写在仓库里没有安全问题）
+name: keep-supabase-awake
+on:
+  schedule:
+    - cron: "0 23 * * *"   # UTC 23:00 = 北京时间每天早上 7 点
+  workflow_dispatch:
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: ping supabase rest
+        run: |
+          curl -fsS "https://YOUR_SUPABASE_URL.supabase.co/rest/v1/slots?select=id&limit=1" \
+            -H "apikey: YOUR_SUPABASE_ANON_KEY" >/dev/null || \
+          echo "ping failed (check placeholders)"
