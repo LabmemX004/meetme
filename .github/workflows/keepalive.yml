@@ -12,6 +12,6 @@ jobs:
     steps:
       - name: ping supabase rest
         run: |
-          curl -fsS "https://YOUR_SUPABASE_URL.supabase.co/rest/v1/slots?select=id&limit=1" \
-            -H "apikey: YOUR_SUPABASE_ANON_KEY" >/dev/null || \
+          curl -fsS "https://exaefyyyupjeusfgvpgg.supabase.co/rest/v1/slots?select=id&limit=1" \
+            -H "apikey: sb_publishable_JVIbiCmCMLRWQ67mkgNOLA_LN9M5XVC" >/dev/null || \
           echo "ping failed (check placeholders)"
