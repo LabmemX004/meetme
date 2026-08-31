@@ -18,6 +18,7 @@
     <button id="today" class="todaylink">本周</button>
   </nav>
   <button id="me-chip" class="chip" title="名字与通知邮箱"></button>
+  <span id="peer-status" class="peer-status"></span>
 </header>
 
 <div id="banner" hidden></div>
@@ -45,7 +46,8 @@
     <h3>你是谁？</h3>
     <p class="muted">名字用来标记你的色块，对方看得到</p>
     <input id="name-input" maxlength="12" placeholder="你的名字 / 昵称">
-    <input id="email-input" type="email" placeholder="邮箱（选填，用于收到对方的通知）">
+    <input id="email-input" type="email" placeholder="你的邮箱（选填，用于收通知）">
+    <input id="peer-input" type="email" placeholder="对方的邮箱（选填，配对用）">
     <button id="name-ok" class="btn">开始</button>
   </div>
 </div>

@@ -88,14 +88,22 @@ if (!DEMO) {
       return data ? data.sticky_image : null;
     },
     async fetchProfiles() {
-      const { data, error } = await sb.from('profiles').select('user_name,email');
+      const { data, error } = await sb.from('profiles').select('user_name,email,peer_email');
       if (error) throw error;
-      return data || [];
+      return (data || []).map(p => ({ ...p, peer_email: p.peer_email || '' }));
     },
-    async saveProfile(name, email) {
-      const { error } = await sb.from('profiles').upsert({ user_name: name, email, updated_at: new Date().toISOString() });
+    async saveProfile(name, email, peerEmail) {
+      const { error } = await sb.from('profiles').upsert({ user_name: name, email, peer_email: peerEmail || '', updated_at: new Date().toISOString() });
       if (error) throw error;
     },
+    channelPresence(name, onChange) {
+      const ch = sb.channel('presence-room', { config: { presence: { key: name } } })
+        .on('presence', { event: 'sync' }, onChange)
+        .subscribe(status => { if (status === 'SUBSCRIBED') ch.track({ at: Date.now() }); });
+      return ch;
+    },
+    presenceNames(ch) { return new Set(Object.keys(ch.presenceState())); },
+    presenceTick() {},
     subscribe(cb) {
       sb.channel('slots-ch')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'slots' }, debounce(cb, 300))
@@ -124,14 +132,37 @@ if (!DEMO) {
     async remove(ids) { this.save(this.load().filter(x => !ids.includes(x.id))); },
     async image(id) { const r = this.load().find(x => x.id === id); return r ? r.sticky_image : null; },
     async fetchProfiles() {
-      try { return JSON.parse(localStorage.getItem(PROF_KEY)) || []; } catch (e) { return []; }
+      const ps = (() => { try { return JSON.parse(localStorage.getItem(PROF_KEY)) || []; } catch (e) { return []; } })();
+      return ps.map(p => ({ ...p, peer_email: p.peer_email || '' }));
     },
-    async saveProfile(name, email) {
+    async saveProfile(name, email, peerEmail) {
       const ps = await this.fetchProfiles();
       const i = ps.findIndex(p => p.user_name === name);
-      if (i >= 0) ps[i].email = email; else ps.push({ user_name: name, email });
+      const row = { user_name: name, email, peer_email: peerEmail || '' };
+      if (i >= 0) ps[i] = { ...ps[i], ...row }; else ps.push(row);
       localStorage.setItem(PROF_KEY, JSON.stringify(ps));
     },
+    channelPresence(name, onChange) {          // 演示模式：用本机存储模拟在线心跳
+      this._name = name; this._onChange = onChange;
+      const beat = () => {
+        const now = Date.now();
+        const all = (() => { try { return JSON.parse(localStorage.getItem('meetme_alive') || '{}'); } catch (e) { return {}; } })();
+        all[name] = now;
+        for (const k in all) if (now - all[k] > 90000) delete all[k];
+        localStorage.setItem('meetme_alive', JSON.stringify(all));
+      };
+      this._beat = beat; beat();
+      this._iv = setInterval(beat, 20000);
+      window.addEventListener('storage', onChange);
+      setTimeout(onChange, 400);
+      return { _demo: true };
+    },
+    presenceNames(ch) {
+      const all = (() => { try { return JSON.parse(localStorage.getItem('meetme_alive') || '{}'); } catch (e) { return {}; } })();
+      const now = Date.now();
+      return new Set(Object.keys(all).filter(k => now - all[k] < 90000));
+    },
+    presenceTick() {},
     subscribe(cb) {
       window.addEventListener('storage', e => { if (e.key === DEMO_KEY) cb(); });
     }
@@ -148,6 +179,8 @@ let profiles = [];            // [{user_name, email}]
 let PPM = 1;                  // 像素/分钟
 let viewDay = (new Date().getDay() + 6) % 7;     // 手机端选中的天（0=周一）
 let animateNext = false;      // 下一次渲染播放切周动画
+let onlineNames = new Set();  // 实时在线的用户名
+let presenceCh = null;        // presence 通道
 let lastSnapshot = null;      // 上次已通知（或基线）的我的块快照
 let notifyTimer = null;
 const isMobile = () => matchMedia('(max-width:640px)').matches;
@@ -224,6 +257,28 @@ function buildLayout() {
     cols.forEach(c => days.appendChild(c));
   }
   renderBlocks();
+}
+
+/* ---------- 邮箱配对：双方互填邮箱才会匹配 ---------- */
+function matchedUserName() {
+  const mine = profiles.find(p => p.user_name === me);
+  if (!mine || !mine.email || !mine.peer_email) return null;
+  const peer = profiles.find(p => p.email === mine.peer_email && p.user_name !== me);
+  if (!peer || peer.peer_email !== mine.email) return null;
+  return peer.user_name;
+}
+function updatePeerUI() {
+  const el = $('peer-status');
+  if (!el) return;
+  const peerName = matchedUserName();
+  el.textContent = peerName ? `· ${peerName} ${onlineNames.has(peerName) ? '🟢在线' : '⚪离线'}` : '';
+}
+function setupPresence() {
+  if (presenceCh || !me) return;
+  presenceCh = db.channelPresence(me, () => {
+    try { onlineNames = db.presenceNames(presenceCh); } catch (e) {}
+    updatePeerUI();
+  });
 }
 
 /* ---------- 块渲染 ---------- */
@@ -566,8 +621,9 @@ async function sendNotify() {
   try {
     const cur = snapMine();
     if (cur === lastSnapshot) return;                    // 改动被撤销/无实质变化：不发
-    const other = profiles.find(p => p.user_name !== me && p.email);
-    if (!other) { lastSnapshot = cur; return; }
+    const peerName = matchedUserName();
+    const other = peerName ? profiles.find(p => p.user_name === peerName && p.email) : null;
+    if (!other) { lastSnapshot = cur; return; }          // 未配对或对方没填邮箱：不发
     const lines = diffLines(JSON.parse(lastSnapshot || '[]'), JSON.parse(cur));
     if (!lines.length) { lastSnapshot = cur; return; }
     const subject = `meetme · ${me} 更新了时间安排`;
@@ -614,12 +670,18 @@ function setBanner(text, isErr) {
 async function refresh() {
   try {
     rows = await db.fetchAll();
-    if (!DEMO) profiles = await db.fetchProfiles().catch(() => profiles);
-    setBanner(DEMO ? '演示模式 · 配置 Supabase 后即可双人同步与邮件通知（见 README）' : '');
+    profiles = await db.fetchProfiles().catch(() => profiles);
+    const peer = matchedUserName();
+    // 配对成功才能互见；未配对时只显示自己的块
+    rows = rows.filter(r => !me || !peer ? r.user_name === me : (r.user_name === me || r.user_name === peer));
+    let banner = DEMO ? '演示模式 · 配置 Supabase 后即可双人同步与邮件通知（见 README）' : '';
+    if (!DEMO && me && !peer) banner += (banner ? ' · ' : '') + '邮箱配对未完成：双方各自点右上角名字，填「我的邮箱 + 对方邮箱」后即可互见与通知';
+    setBanner(banner);
   } catch (e) {
     setBanner('加载数据失败：' + e.message, true);
   }
   if (!draw) renderWeek();          // 拖动进行中不打断重建
+  updatePeerUI();
   if (lastSnapshot === null) lastSnapshot = snapMine();   // 基线快照：启动时的状态
 }
 
@@ -663,8 +725,9 @@ function openProfile() {
   overlay.innerHTML = `
   <div class="modal small">
     <h3>${esc(me || '')}</h3>
-    <p class="muted">填写邮箱后，对方的时间更新会在 5 分钟确认后邮件通知你</p>
-    <input id="p-email" type="email" placeholder="你的邮箱" value="${esc(mineP ? mineP.email : '')}">
+    <p class="muted">填「对方邮箱」完成配对：双方互相填写后才能互见时间、显示在线状态并发送通知</p>
+    <input id="p-email" type="email" placeholder="你的邮箱（接收通知）" value="${esc(mineP ? mineP.email : '')}">
+    <input id="p-peer" type="email" placeholder="对方的邮箱（配对用）" value="${esc(mineP ? mineP.peer_email : '')}">
     <div class="btnrow">
       <button class="btn pink" id="p-save">保存</button>
       <button class="btn ghost" id="p-switch">换个名字</button>
@@ -675,10 +738,12 @@ function openProfile() {
   overlay.addEventListener('pointerdown', e => { if (e.target === overlay) pclose(); });
   overlay.querySelector('#p-save').onclick = async () => {
     const email = overlay.querySelector('#p-email').value.trim();
+    const peerEmail = overlay.querySelector('#p-peer').value.trim();
     try {
-      await db.saveProfile(me, email);
+      await db.saveProfile(me, email, peerEmail);
       profiles = await db.fetchProfiles();
-      pclose();
+      toast(matchedUserName() ? '配对成功 🎉' : '已保存（等待对方填写匹配的邮箱）');
+      await refresh(); pclose();
     } catch (err) { toast('保存失败：' + err.message, true); }
   };
   overlay.querySelector('#p-switch').onclick = () => {
@@ -699,11 +764,13 @@ function showName() {
     me = v;
     localStorage.setItem(ME_KEY, v);
     const email = $('email-input').value.trim();
-    if (email) {
-      try { await db.saveProfile(v, email); profiles = await db.fetchProfiles(); } catch (e) {}
+    const peer = $('peer-input') ? $('peer-input').value.trim() : '';
+    if (email || peer) {
+      try { await db.saveProfile(v, email, peer); profiles = await db.fetchProfiles(); } catch (e) {}
     }
     ov.hidden = true;
     lastSnapshot = null;          // 让下一次 refresh 重新取基线
+    setupPresence();
     renderWeek();
     refresh();
   };
@@ -714,6 +781,7 @@ function showName() {
 /* ---------- 启动 ---------- */
 db.subscribe(refresh);
 setInterval(refresh, 45000);
+if (me) setupPresence();
 let rsz; window.addEventListener('resize', debounce(() => { buildLayout(); }, 150));
 if (!me) showName();
 refresh();
