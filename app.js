@@ -95,6 +95,8 @@ if (!DEMO) {
     async saveProfile(name, email, peerEmail) {
       const { error } = await sb.from('profiles').upsert({ user_name: name, email, peer_email: peerEmail || '', updated_at: new Date().toISOString() });
       if (error) throw error;
+      // 同一邮箱只保留一份资料：换名字后自动清掉旧记录
+      await sb.from('profiles').delete().eq('email', email).neq('user_name', name);
     },
     channelPresence(name, onChange) {
       const ch = sb.channel('presence-room', { config: { presence: { key: name } } })
@@ -263,9 +265,13 @@ function buildLayout() {
 function matchedUserName() {
   const mine = profiles.find(p => p.user_name === me);
   if (!mine || !mine.email || !mine.peer_email) return null;
-  const peer = profiles.find(p => p.email === mine.peer_email && p.user_name !== me);
-  if (!peer || peer.peer_email !== mine.email) return null;
-  return peer.user_name;
+  // 扫描全部资料，找到互相填写对方邮箱的那个人（容忍同名旧资料干扰）
+  const peer = profiles.find(p =>
+    p.user_name !== me &&
+    p.email === mine.peer_email &&
+    p.peer_email === mine.email
+  );
+  return peer ? peer.user_name : null;
 }
 function updatePeerUI() {
   const el = $('peer-status');
