@@ -16,6 +16,7 @@ create table public.slots (
   status text not null check (status in ('busy','free')),        -- busy=有事 free=没事
   note text not null default '',
   sticky_text text not null default '',
+  sticky_replies jsonb not null default '[]',     -- 对方的留言 [{user,text,at}]
   has_image boolean not null default false,
   sticky_image text,                       -- data URL，列表请求不取这列（懒加载）
   created_at timestamptz not null default now(),

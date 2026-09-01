@@ -21,6 +21,30 @@ const FIXED_WEEK = '1970-01-05';
 const ME_KEY = 'meetme_me', DEMO_KEY = 'meetme_demo_v1', PROF_KEY = 'meetme_profiles_v1';
 const NOTIFY_DELAY = 5 * 60 * 1000;              // 改动静默 5 分钟后确认发送
 
+/* ---------- 身份与偏好：localStorage + cookie 双重持久化 ---------- */
+const COOKIE_DAYS = 365;
+function setCookie(key, val) {
+  document.cookie = key + '=' + encodeURIComponent(val) +
+    '; max-age=' + COOKIE_DAYS * 86400 + '; path=/; SameSite=Lax';
+}
+function getCookie(key) {
+  const m = document.cookie.match(new RegExp('(?:^|; )' + key + '=([^;]*)'));
+  return m ? decodeURIComponent(m[1]) : null;
+}
+const mePersist = {
+  get() {
+    return localStorage.getItem(ME_KEY) || getCookie(ME_KEY);
+  },
+  set(v) {
+    localStorage.setItem(ME_KEY, v);
+    setCookie(ME_KEY, v);
+  },
+  clear() {
+    localStorage.removeItem(ME_KEY);
+    setCookie(ME_KEY, '');
+  }
+};
+
 /* ---------- 小工具 ---------- */
 const $ = id => document.getElementById(id);
 const pad = n => String(n).padStart(2, '0');
@@ -66,9 +90,9 @@ if (!DEMO) {
   db = {
     async fetchAll() {
       const { data, error } = await sb.from('slots')
-        .select('id,user_name,week_start,is_fixed,day_of_week,start_min,end_min,status,note,sticky_text,has_image');
+        .select('id,user_name,week_start,is_fixed,day_of_week,start_min,end_min,status,note,sticky_text,sticky_replies,has_image');
       if (error) throw error;
-      return data || [];
+      return (data || []).map(r => ({ ...r, sticky_replies: r.sticky_replies || [] }));
     },
     async upsert(rows) {
       const { error } = await sb.from('slots').upsert(rows);
@@ -122,7 +146,7 @@ if (!DEMO) {
       for (const r of rows) {
         const i = all.findIndex(x => x.id === r.id);
         if (i >= 0) all[i] = { ...all[i], ...r };
-        else all.push({ created_at: new Date().toISOString(), note: '', sticky_text: '', has_image: false, ...r });
+        else all.push({ created_at: new Date().toISOString(), note: '', sticky_text: '', sticky_replies: [], has_image: false, ...r });
       }
       this.save(all);
     },
@@ -173,7 +197,7 @@ if (!DEMO) {
 }
 
 /* ---------- 状态 ---------- */
-let me = localStorage.getItem(ME_KEY) || null;
+let me = mePersist.get();
 let monday = mondayOf(new Date());
 let brush = { status: 'busy', fixed: false };
 let rows = [];                // 全部块
@@ -317,7 +341,7 @@ function renderBlocks() {
         const time = `<span class="bs">${fmtMin(r.start_min)}</span><span class="be">–${fmtMin(r.end_min)}</span>`;
         let html = `<span class="bt">${r.is_fixed ? '<i class="fx">每周</i>' : ''}${time}</span>`;
         if (r.note) html += `<span class="bn">${esc(r.note)}</span>`;
-        if (r.sticky_text || r.has_image) html += '<i class="stk"></i>';
+        if (r.sticky_text || r.has_image || (r.sticky_replies && r.sticky_replies.length)) html += '<i class="stk"></i>';
         b.innerHTML = html;
         if (freshIds.has(r.id)) { b.classList.add('spawn'); freshIds.delete(r.id); }
         lane.appendChild(b);
@@ -449,6 +473,7 @@ async function commitSweep(d, s, e) {
     user_name: me, week_start: week, is_fixed: fixed, day_of_week: d.day,
     start_min: p.start_min, end_min: p.end_min, status: p.status,
     note: p.note || '', sticky_text: p.sticky_text || '',
+    sticky_replies: p.sticky_replies || [],
     has_image: p.has_image || false, sticky_image: p.sticky_image ?? null
   }));
   rows = rows.filter(r => !removedIds.includes(r.id)).concat(newRows);
@@ -459,7 +484,7 @@ async function commitSweep(d, s, e) {
     if (newRows.length) await db.upsert(newRows.map(r => ({
       id: r.id, user_name: r.user_name, week_start: r.week_start, is_fixed: r.is_fixed,
       day_of_week: r.day_of_week, start_min: r.start_min, end_min: r.end_min, status: r.status,
-      note: r.note, sticky_text: r.sticky_text, has_image: r.has_image
+      note: r.note, sticky_text: r.sticky_text, sticky_replies: r.sticky_replies || [], has_image: r.has_image
     })));
   } catch (err) { toast('保存失败：' + err.message, true); await refresh(); }
   scheduleNotify();
@@ -507,6 +532,11 @@ function openEditor(row) {
     <div class="sticky-box" id="t-box" hidden>
       <textarea id="m-sticky" readonly></textarea>
       <div class="imgrow"><img id="m-img" alt="" hidden></div>
+      <div class="replies" id="t-replies"></div>
+      <div class="replyrow">
+        <input id="t-reply" maxlength="200" placeholder="回复 TA…">
+        <button class="btn pink sm" id="t-send">发送</button>
+      </div>
     </div>
     <div class="btnrow"><button class="btn ghost" id="m-close">关闭</button></div>
   </div>`;
@@ -517,14 +547,34 @@ function openEditor(row) {
   const stickyEl = overlay.querySelector('#m-sticky');
   const imgEl = overlay.querySelector('#m-img');
 
-  if (!own) {   // 只读查看对方的便签
-    if (row.sticky_text || row.has_image) {
-      overlay.querySelector('#t-box').hidden = false;
-      stickyEl.value = row.sticky_text || '';
-      if (row.has_image) db.image(row.id).then(src => {
-        if (src && document.body.contains(overlay)) { imgEl.src = src; imgEl.hidden = false; }
-      }).catch(() => {});
-    }
+  if (!own) {   // 只读查看对方的便签 + 留言
+    const tBox = overlay.querySelector('#t-box');
+    const repliesEl = overlay.querySelector('#t-replies');
+    const replyInp = overlay.querySelector('#t-reply');
+    const renderReplies = () => {
+      const arr = (row.sticky_replies || []).slice().sort((a, b) => (a.at || 0) - (b.at || 0));
+      repliesEl.innerHTML = arr.map(r =>
+        `<div class="reply"><b>${esc(r.user)}</b>：${esc(r.text)}<span class="rt">${new Date(r.at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' })}</span></div>`
+      ).join('');
+    };
+    tBox.hidden = false;
+    stickyEl.value = row.sticky_text || '';
+    renderReplies();
+    if (row.has_image) db.image(row.id).then(src => {
+      if (src && document.body.contains(overlay)) { imgEl.src = src; imgEl.hidden = false; }
+    }).catch(() => {});
+    overlay.querySelector('#t-send').onclick = async () => {
+      const text = replyInp.value.trim();
+      if (!text) return;
+      const next = [...(row.sticky_replies || []), { user: me, text, at: Date.now() }];
+      try {
+        await db.update(row.id, { sticky_replies: next });
+        row.sticky_replies = next;
+        replyInp.value = '';
+        renderReplies();
+      } catch (err) { toast('发送失败：' + err.message, true); }
+    };
+    replyInp.addEventListener('keydown', e => { if (e.key === 'Enter') overlay.querySelector('#t-send').click(); });
     overlay.querySelector('#m-close').onclick = close;
     return;
   }
@@ -563,7 +613,7 @@ function openEditor(row) {
     const fixed = overlay.querySelector('#m-fixed').checked;
     const note = overlay.querySelector('#m-note').value.trim();
     const stickyText = stickyEl.value;
-    const fields = { status, note, sticky_text: stickyText };
+    const fields = { status, note, sticky_text: stickyText, sticky_replies: row.sticky_replies || [] };
     if (imgRemoved) { fields.has_image = false; fields.sticky_image = null; }
     else if (imgChanged) { fields.has_image = true; fields.sticky_image = localImg; }
     try {
@@ -578,6 +628,7 @@ function openEditor(row) {
           user_name: me, week_start: week, is_fixed: fixed,
           day_of_week: row.day_of_week, start_min: row.start_min, end_min: row.end_min,
           status, note, sticky_text: stickyText,
+          sticky_replies: row.sticky_replies || [],
           has_image: !imgRemoved && !!img, sticky_image: imgRemoved ? null : (img || null)
         }]);
         rows = rows.filter(r => r.id !== row.id);
@@ -753,7 +804,7 @@ function openProfile() {
     } catch (err) { toast('保存失败：' + err.message, true); }
   };
   overlay.querySelector('#p-switch').onclick = () => {
-    localStorage.removeItem(ME_KEY);
+    mePersist.clear();
     location.reload();
   };
 }
@@ -768,7 +819,7 @@ function showName() {
     const v = input.value.trim();
     if (!v) { input.focus(); return; }
     me = v;
-    localStorage.setItem(ME_KEY, v);
+    mePersist.set(v);
     const email = $('email-input').value.trim();
     const peer = $('peer-input') ? $('peer-input').value.trim() : '';
     if (email || peer) {

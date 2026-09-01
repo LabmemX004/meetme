@@ -267,6 +267,20 @@ header{animation:rise .45s ease backwards}
 }
 .sticky-view img{max-width:100%;border-radius:8px;margin-top:10px}
 
+/* ---------- 留言（便签内） ---------- */
+.replies{margin-top:8px;display:flex;flex-direction:column;gap:6px}
+.reply{
+  background:#fff9c9;border-radius:8px;padding:5px 9px;font-size:12.5px;color:#713f12;
+  line-height:1.4;word-break:break-word;box-shadow:0 1px 2px #eab30822;
+}
+.reply b{color:#a16207;font-weight:600}
+.reply .rt{float:right;font-size:10.5px;color:#c3a24f;margin-left:6px}
+.replyrow{display:flex;gap:6px;margin-top:8px}
+.replyrow input{
+  flex:1;border:1px solid #f3e08a;border-radius:8px;padding:6px 9px;font-size:13px;background:#fffc;
+}
+.replyrow input:focus{outline:2px solid #f0abfc;border-color:#f0abfc}
+
 .muted{color:var(--ink2)}
 .smalltxt{font-size:12px}
 
