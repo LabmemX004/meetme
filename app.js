@@ -387,6 +387,9 @@ document.getElementById('days').addEventListener('pointerdown', e => {
   const rect = laneEl.getBoundingClientRect();
   const min = minOf(e.clientY - rect.top);
   const isMine = laneEl.dataset.lane === 'mine';
+  // 过去的日期不可画
+  const dayLimit = maxMinFor(+laneEl.dataset.day);
+  if (dayLimit < 0 && isMine) return;
   draw = {
     day: +laneEl.dataset.day, laneEl, isMine,
     x0: e.clientX, y0: e.clientY, moved: false,
@@ -399,29 +402,31 @@ document.getElementById('days').addEventListener('pointerdown', e => {
   }
   e.preventDefault();
 });
-// 当前显示周中某天某分钟的截止时间：过去的时间不能再画
+// 当前显示周中某天可画的最大分钟数；-1 表示已过期不可画
 function maxMinFor(day) {
   const date = addDays(monday, day);
   const now = new Date();
-  if (isoDate(date) > isoDate(now)) return END_HOUR * 60;         // 未来日期不限制
-  if (isoDate(date) < isoDate(now)) return START_HOUR * 60;       // 过去日期不可画
-  return Math.max(START_HOUR * 60, now.getHours() * 60 + now.getMinutes()); // 今天：截止到当前时刻
+  const diff = isoDate(date) > isoDate(now) ? 1 : (isoDate(date) < isoDate(now) ? -1 : 0);
+  if (diff > 0) return END_HOUR * 60;
+  if (diff < 0) return -1;
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  return Math.ceil(nowMin / SNAP) * SNAP;   // 今天：向上取整到下一个 5 分钟
 }
 window.addEventListener('pointermove', e => {
   if (!draw) return;
   if (Math.hypot(e.clientX - draw.x0, e.clientY - draw.y0) > 5) draw.moved = true;
   if (!draw.isMine || !draw.moved) return;
+  const dayLimit = maxMinFor(draw.day);
+  if (dayLimit < 0) return;
   const rect = draw.laneEl.getBoundingClientRect();
-  const dayDate = addDays(monday, draw.day);
-  const limit = maxMinFor(draw.day);                // 过去的时间不可画
-  const cur = Math.min(minOf(e.clientY - rect.top), limit);
+  const cur = Math.min(minOf(e.clientY - rect.top), dayLimit);
   draw.s = Math.min(draw.s, cur); draw.e = Math.max(draw.e, cur);
-  draw.s = Math.max(draw.s, START_HOUR * 60); draw.e = Math.min(draw.e, limit);
+  draw.s = Math.max(draw.s, START_HOUR * 60); draw.e = Math.min(draw.e, dayLimit);
   if (draw.e - draw.s < SNAP) {                       // 吸附后至少 5 分钟
     if (cur < draw.s) draw.s = Math.max(START_HOUR * 60, draw.e - SNAP);
-    else draw.e = Math.min(limit, draw.s + SNAP);
+    else draw.e = Math.min(dayLimit, draw.s + SNAP);
   }
-  if (draw.e <= draw.s) { draw.ghost && draw.ghost.remove(); d.ghost = null; tip.hidden = true; return; }
+  if (draw.e <= draw.s) { if (draw.ghost) draw.ghost.remove(); tip.hidden = true; return; }
   showGhost();
   tip.hidden = false;
   tip.textContent = `${fmtMin(draw.s)} – ${fmtMin(draw.e)} · ${draw.e - draw.s} 分钟` + (draw.mode === 'erase' ? ' · 擦除' : '');
