@@ -27,21 +27,26 @@ function setCookie(key, val) {
   document.cookie = key + '=' + encodeURIComponent(val) +
     '; max-age=' + COOKIE_DAYS * 86400 + '; path=/; SameSite=Lax';
 }
-function getCookie(key) {
+function getCookieSafe(key) {
   const m = document.cookie.match(new RegExp('(?:^|; )' + key + '=([^;]*)'));
   return m ? decodeURIComponent(m[1]) : null;
 }
+function setCookieSafe(key, val) {          // 中文/非 ASCII 内容用 UTF-8 百分比编码
+  document.cookie = key + '=' + encodeURIComponent(String(val).replace(/[^\x20-\x7E]/g, c =>
+    c.split('').map(ch => '%' + ch.codePointAt(0).toString(16).toUpperCase()).join(''))) +
+    '; max-age=' + COOKIE_DAYS * 86400 + '; path=/; SameSite=Lax';
+}
 const mePersist = {
   get() {
-    return localStorage.getItem(ME_KEY) || getCookie(ME_KEY);
+    return localStorage.getItem(ME_KEY) || getCookieSafe(ME_KEY);
   },
   set(v) {
     localStorage.setItem(ME_KEY, v);
-    setCookie(ME_KEY, v);
+    setCookieSafe(ME_KEY, v);
   },
   clear() {
     localStorage.removeItem(ME_KEY);
-    setCookie(ME_KEY, '');
+    setCookieSafe(ME_KEY, '');
     setCookie('meetme_email', '');
     setCookie('meetme_peer', '');
   }
