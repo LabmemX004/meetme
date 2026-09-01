@@ -293,6 +293,17 @@ function buildLayout() {
   renderBlocks();
 }
 
+/* ---------- 邮件通知：两类邮件 ---------- */
+async function postNotify(to, subject, text) {
+  if (DEMO || !to) return;
+  const res = await fetch(`${SUPA_URL}/functions/v1/notify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY },
+    body: JSON.stringify({ to, subject, text })
+  });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+}
+
 /* ---------- 邮箱配对：双方互填邮箱才会匹配 ---------- */
 function matchedUserName() {
   const mine = profiles.find(p => p.user_name === me);
@@ -527,6 +538,11 @@ function openEditor(row) {
         <button class="btn ghost sm" id="m-upload">🖼 贴张图</button>
         <button class="btn ghost sm" id="m-imgdel" hidden>移除图片</button>
       </div>
+      <div class="replies" id="m-replies"></div>
+      <div class="replyrow">
+        <input id="m-reply" maxlength="200" placeholder="回复对方的留言…">
+        <button class="btn pink sm" id="m-replysend">回复</button>
+      </div>
     </div>
     <div class="btnrow">
       <button class="btn" id="m-save">保存</button>
@@ -588,6 +604,31 @@ function openEditor(row) {
   }
 
   stickyEl.value = row.sticky_text || '';
+
+  // own 弹窗：显示对方的留言 + 回复框（回复后通知对方）
+  const myRepliesEl = overlay.querySelector('#m-replies');
+  const myReplyInp = overlay.querySelector('#m-reply');
+  const renderMyReplies = () => {
+    const arr = (row.sticky_replies || []).filter(r => r.user !== me);
+    myRepliesEl.innerHTML = arr.map(r =>
+      `<div class="reply"><b>${esc(r.user)}</b>：${esc(r.text)}<span class="rt">${new Date(r.at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' })}</span></div>`
+    ).join('');
+  };
+  renderMyReplies();
+  overlay.querySelector('#m-replysend').onclick = async () => {
+    const text = myReplyInp.value.trim();
+    if (!text) return;
+    const next = [...(row.sticky_replies || []), { user: me, text, at: Date.now() }];
+    try {
+      await db.update(row.id, { sticky_replies: next });
+      row.sticky_replies = next;
+      myReplyInp.value = '';
+      renderMyReplies();
+      sendReplyNotify(row, text, me);
+    } catch (err) { toast('回复失败：' + err.message, true); }
+  };
+  myReplyInp.addEventListener('keydown', e => { if (e.key === 'Enter') overlay.querySelector('#m-replysend').click(); });
+
   const imgDelEl = overlay.querySelector('#m-imgdel');
   const fileEl = overlay.querySelector('#m-file');
   if (row.has_image) {
@@ -691,18 +732,30 @@ async function sendNotify() {
     if (!other) { lastSnapshot = cur; return; }          // 未配对或对方没填邮箱：不发
     const lines = diffLines(JSON.parse(lastSnapshot || '[]'), JSON.parse(cur));
     if (!lines.length) { lastSnapshot = cur; return; }
-    const subject = `meetme · ${me} 更新了时间安排`;
-    const text = `${me} 刚刚更新了这一周的时间安排（改动完成 5 分钟后发送）：\n\n` +
+    const subject = `📅 meetme · ${me} 更新了时间安排`;
+    const text = `【时间更新】${me} 刚刚更新了这一周的时间安排（改动完成 5 分钟后发送）：\n\n` +
       lines.join('\n') + '\n\n打开查看：' + (SITE_URL || '(网站地址见 config.js)') +
       '\n\n— meetme 自动发送';
-    const res = await fetch(`${SUPA_URL}/functions/v1/notify`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': SUPA_KEY, 'Authorization': 'Bearer ' + SUPA_KEY },
-      body: JSON.stringify({ to: other.email, subject, text })
-    });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
+    await postNotify(other.email, subject, text);
     lastSnapshot = cur;                                  // 成功后才更新基线，失败下次再试
   } catch (e) { console.warn('通知发送失败（稍后改动会重试）:', e); }
+}
+
+/* ---------- 留言通知：立即发（不走静默期） ---------- */
+async function sendReplyNotify(row, replyText, replierName) {
+  if (DEMO) return;
+  try {
+    // 收件人：如果留言者是块主人，通知配对 peer；否则通知块主人
+    const targetName = (replierName === row.user_name) ? matchedUserName() : row.user_name;
+    if (!targetName || targetName === replierName) return;
+    const target = profiles.find(p => p.user_name === targetName && p.email);
+    if (!target) return;
+    const d = addDays(monday, row.day_of_week);
+    const time = `${fmtMin(row.start_min)}–${fmtMin(row.end_min)}`;
+    const subject = `💬 meetme · ${replierName} 回复了你的便签`;
+    const text = `【便答回复】${replierName} 在 ${DAYS[row.day_of_week]} ${d.getMonth() + 1}/${d.getDate()} ${time} 的色块便签上留言：\n\n「${replyText}」\n\n打开查看：${SITE_URL || ''}\n\n— meetme 自动发送`;
+    await postNotify(target.email, subject, text);
+  } catch (e) { console.warn('留言通知失败:', e); }
 }
 
 function diffLines(oldL, newL) {
