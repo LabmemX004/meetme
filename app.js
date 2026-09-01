@@ -42,8 +42,16 @@ const mePersist = {
   clear() {
     localStorage.removeItem(ME_KEY);
     setCookie(ME_KEY, '');
+    setCookie('meetme_email', '');
+    setCookie('meetme_peer', '');
   }
 };
+// 启动时：如果 localStorage 丢了但 cookie 里有身份，自动恢复
+(function recoverMe() {
+  if (!localStorage.getItem(ME_KEY) && getCookie(ME_KEY)) {
+    mePersist.set(getCookie(ME_KEY));
+  }
+})();
 
 /* ---------- 小工具 ---------- */
 const $ = id => document.getElementById(id);
@@ -796,6 +804,10 @@ function openProfile() {
   overlay.querySelector('#p-save').onclick = async () => {
     const email = overlay.querySelector('#p-email').value.trim();
     const peerEmail = overlay.querySelector('#p-peer').value.trim();
+    if (email) {
+      setCookie('meetme_email', email);
+      setCookie('meetme_peer', peerEmail);
+    }
     try {
       await db.saveProfile(me, email, peerEmail);
       profiles = await db.fetchProfiles();
@@ -822,12 +834,17 @@ function showName() {
     mePersist.set(v);
     const email = $('email-input').value.trim();
     const peer = $('peer-input') ? $('peer-input').value.trim() : '';
+    // 有邮箱时，同时写入 cookie 备份：就算换了名字，刷新也能按邮箱认回来
+    if (email) {
+      setCookie('meetme_email', email);
+      setCookie('meetme_peer', peer);
+    }
     if (email || peer) {
       try { await db.saveProfile(v, email, peer); profiles = await db.fetchProfiles(); } catch (e) {}
     }
-    ov.hidden = true;
-    lastSnapshot = null;          // 让下一次 refresh 重新取基线
     setupPresence();
+    ov.hidden = true;
+    lastSnapshot = null;
     renderWeek();
     refresh();
   };
