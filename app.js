@@ -401,12 +401,12 @@ document.getElementById('days').addEventListener('pointerdown', e => {
       const row = rows.find(x => x.id === blk.dataset.id);
       const scopeWk = brush.fixed ? FIXED_WEEK : isoDate(monday);
       if (!row || row.is_fixed !== brush.fixed || row.week_start !== scopeWk) continue;
-      if (relY >= 0 && relY <= 8) {                        // 上边缘：缩短 start
+      if (relY >= 0 && relY <= 10) {                        // 上边缘：缩短 start
         startResize(row, 'start', day, dayRange);
         e.preventDefault();
         return;
       }
-      if (relY >= r.height - 8 && relY <= r.height) {      // 下边缘：延长 end
+      if (relY >= r.height - 10 && relY <= r.height) {      // 下边缘：延长 end
         startResize(row, 'end', day, dayRange);
         e.preventDefault();
         return;
