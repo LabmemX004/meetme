@@ -215,6 +215,8 @@ let viewDay = (new Date().getDay() + 6) % 7;     // 手机端选中的天（0=�
 let animateNext = false;      // 下一次渲染播放切周动画
 let onlineNames = new Set();  // 实时在线的用户名
 let presenceCh = null;        // presence 通道
+let autoScrollRaf = null;     // 画格子时自动滚动的 raf
+let lastDrawClient = null;    // 拖画时最后已知的鼠标位置
 let lastSnapshot = null;      // 上次已通知（或基线）的我的块快照
 let notifyTimer = null;
 const isMobile = () => matchMedia('(max-width:640px)').matches;
@@ -384,23 +386,78 @@ let draw = null;   // {day, lane, mode:'paint'|'erase', s, e, cur, moved, x0, y0
 document.getElementById('days').addEventListener('pointerdown', e => {
   const laneEl = e.target.closest('.lane');
   if (!laneEl || e.button > 0) return;
+  const day = +laneEl.dataset.day;
+  const isMine = laneEl.dataset.lane === 'mine';
+  const dayRange = drawRangeFor(day);
+  if (!dayRange && isMine) return;                     // 过去的日期不可画
   const rect = laneEl.getBoundingClientRect();
   const min = minOf(e.clientY - rect.top);
-  const isMine = laneEl.dataset.lane === 'mine';
-  // 过去的日期不可画
-  const dayRange = drawRangeFor(+laneEl.dataset.day);
-  if (!dayRange && isMine) return;
+
+  // 检查是否点在了自己色块的上/下边缘（8px 区域）→ 进入 resize 模式
+  if (isMine && dayRange) {
+    for (const blk of laneEl.querySelectorAll('.blk.mine')) {
+      const r = blk.getBoundingClientRect();
+      const relY = e.clientY - r.top;
+      const row = rows.find(x => x.id === blk.dataset.id);
+      if (!row || row.is_fixed !== brush.fixed || row.week_start !== (brush.fixed ? FIXED_WEEK : isoDate(monday))) continue;
+      if (relY >= 0 && relY <= 8) {                        // 上边缘：缩短 start
+        startResize(row, 'start', day, dayRange);
+        e.preventDefault();
+        return;
+      }
+      if (relY >= r.height - 8 && relY <= r.height) {      // 下边缘：延长 end
+        startResize(row, 'end', day, dayRange);
+        e.preventDefault();
+        return;
+      }
+    }
+  }
+
   draw = {
-    day: +laneEl.dataset.day, laneEl, isMine,
+    day, laneEl, isMine,
     x0: e.clientX, y0: e.clientY, moved: false,
     mode: null, s: min, e: min, ghost: null
   };
   if (isMine) {
-    const hit = blockAt(draw.day, min, 'mine');
+    const hit = blockAt(day, min, 'mine');
     // 起点是自己同类块 → 这次拖动为擦除；否则为绘制
     draw.mode = hit && hit.status === brush.status && hit.is_fixed === brush.fixed ? 'erase' : 'paint';
   }
   e.preventDefault();
+});
+/* ---------- 色块上下边缘拖拽调时长 ---------- */
+let resize = null;
+window.addEventListener('pointermove', e => {
+  if (!resize) return;
+  const laneEl = document.querySelector(`.lane.mine[data-day="${resize.day}"]`);
+  if (!laneEl) return;
+  const rect = laneEl.getBoundingClientRect();
+  const ppm = rect.height / 840;
+  const newMin = clamp(snap((e.clientY - rect.top) / ppm + 600), resize.row.status === 'busy' ? 0 : 0, END_HOUR * 60);
+  if (resize.edge === 'start') {
+    resize.row.start_min = clamp(newMin, 0, resize.row.end_min - SNAP);
+  } else {
+    resize.row.end_min = clamp(newMin, resize.row.start_min + SNAP, END_HOUR * 60);
+  }
+  renderBlocks();
+});
+window.addEventListener('pointerup', e => {
+  if (!resize) return;
+  const r = resize; resize = null;
+  // ID 变了（时间改了）→ 删旧建新
+  const oldId = r.row.id;
+  const newId = mkId(r.row.user_name, r.row.is_fixed, r.row.week_start, r.day, r.row.start_min, r.row.end_min);
+  if (newId === oldId) return; // 时间没变
+  r.row.id = newId;
+  db.remove([oldId]).then(() =>
+    db.upsert([{
+      id: newId, user_name: r.row.user_name, week_start: r.row.week_start,
+      is_fixed: r.row.is_fixed, day_of_week: r.row.day_of_week,
+      start_min: r.row.start_min, end_min: r.row.end_min, status: r.row.status,
+      note: r.row.note, sticky_text: r.row.sticky_text,
+      sticky_replies: r.row.sticky_replies || [], has_image: r.row.has_image
+    }])
+  ).catch(err => { toast('保存失败：' + err.message, true); refresh(); });
 });
 // 某天的可画时间范围；null 表示已过期不可画
 // 返回 {min, max}——今天 min=当前时刻（向上取整到 SNAP），未来 min=起始时间
@@ -416,8 +473,16 @@ function drawRangeFor(day) {
 }
 window.addEventListener('pointermove', e => {
   if (!draw) return;
+  lastDrawClient = { x: e.clientX, y: e.clientY };
   if (Math.hypot(e.clientX - draw.x0, e.clientY - draw.y0) > 5) draw.moved = true;
   if (!draw.isMine || !draw.moved) return;
+  // 拖到屏幕边缘时自动滚动
+  const EDGE = 60;
+  if (e.clientY > window.innerHeight - EDGE) {
+    window.scrollBy(0, Math.min(12, (e.clientY - (window.innerHeight - EDGE)) / 3 + 4));
+  } else if (e.clientY < EDGE && window.scrollY > 0) {
+    window.scrollBy(0, -Math.min(12, (EDGE - e.clientY) / 3 + 4));
+  }
   const rng = drawRangeFor(draw.day);
   if (!rng) return;
   const rect = draw.laneEl.getBoundingClientRect();
@@ -436,6 +501,17 @@ window.addEventListener('pointermove', e => {
   tip.style.left = e.clientX + 'px';
   tip.style.top = rect.top + yOf((draw.s + draw.e) / 2) + 'px';
 });
+// 画格子过程中页面滚动时重新计算位置
+window.addEventListener('scroll', debounce(() => {
+  if (!draw || !draw.moved || !lastDrawClient) return;
+  const rect = draw.laneEl.getBoundingClientRect();
+  const rng = drawRangeFor(draw.day);
+  if (!rng) return;
+  const cur = clamp(minOf(lastDrawClient.y - rect.top), rng.min, rng.max);
+  draw.s = clamp(Math.min(draw.s, cur), rng.min, rng.max);
+  draw.e = clamp(Math.max(draw.e, cur), rng.min, rng.max);
+  showGhost();
+}, 50));
 window.addEventListener('pointerup', e => {
   if (!draw) return;
   const d = draw; draw = null;
