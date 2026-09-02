@@ -539,16 +539,27 @@ window.addEventListener('pointerup', e => {
 });
 window.addEventListener('pointercancel', () => { if (draw) { draw.ghost && draw.ghost.remove(); tip.hidden = true; draw = null; } });
 
-document.getElementById('days').addEventListener('dblclick', e => {
+// 用 click 计数区分单双击：250ms 内第二次点击 = 删除，否则 260ms 后开编辑器
+let lastClickBlk = null, lastClickAt = 0, clickTimer2 = null;
+document.getElementById('days').addEventListener('click', e => {
   const blk = e.target.closest('.blk.mine');
   if (!blk) return;
-  clearTimeout(clickTimer);           // 取消待触发的 openEditor
-  const id = blk.dataset.id;
-  if (!id) return;
-  rows = rows.filter(r => r.id !== id);
-  renderBlocks();
-  db.remove([id]).catch(() => refresh());
-  toast('已删除');
+  const now = Date.now();
+  if (lastClickBlk === blk && now - lastClickAt < 250) {   // 双击 → 删除
+    clearTimeout(clickTimer2);
+    lastClickBlk = null; lastClickAt = 0;
+    const id = blk.dataset.id;
+    if (!id) return;
+    rows = rows.filter(r => r.id !== id);
+    renderBlocks();
+    db.remove([id]).catch(() => refresh());
+    toast('已删除');
+  } else {                                                // 可能是单击 → 延迟决定
+    lastClickBlk = blk; lastClickAt = now;
+    const row = rows.find(r => r.id === blk.dataset.id);
+    clearTimeout(clickTimer2);
+    if (row) clickTimer2 = setTimeout(() => { lastClickBlk = null; lastClickAt = 0; openEditor(row); }, 260);
+  }
 });
 
 function showGhost() {
