@@ -1,5 +1,4 @@
 'use strict';
-import { initInteractions } from './src/interactions.js';
 /* ============================================================
    meetme · 双人时间协调
    自由绘制（内部 5 分钟吸附）· GitHub Pages + Supabase
@@ -892,6 +891,6 @@ import('./src/interactions.js').then(m => m.initInteractions({
   minOfY: y => clamp(START_HOUR * 60 + y / PPM, START_HOUR * 60, END_HOUR * 60),
   yOfMin: m => (m - START_HOUR * 60) * PPM,
   renderBlocks: () => renderBlocks(),
-}));
+})).catch(err => console.error('interactions load failed:', err));
 if (!me) showName();
 refresh();
