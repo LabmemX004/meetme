@@ -516,23 +516,12 @@ window.addEventListener('scroll', debounce(() => {
   draw.e = clamp(Math.max(draw.e, cur), rng.min, rng.max);
   showGhost();
 }, 50));
-let clickTimer = null;
 window.addEventListener('pointerup', e => {
   if (!draw) return;
   const d = draw; draw = null;
   tip.hidden = true;
   if (d.ghost) d.ghost.remove();
-  if (!d.moved) {                                     // 单击：延迟到双击判定窗口后决定
-    if (e.target.closest && e.target.closest('.lane')) {
-      const rect = d.laneEl.getBoundingClientRect();
-      const min = minOf(e.clientY - rect.top);
-      const hit = blockAt(d.day, min, d.isMine ? 'mine' : 'theirs');
-      if (hit) {
-        const row = hit;
-        clearTimeout(clickTimer);
-        clickTimer = setTimeout(() => openEditor(row), 260);
-      }
-    }
+  if (!d.moved) {                                     // 单击：交给 click 计数器处理
     return;
   }
   if (d.isMine && d.e > d.s) commitSweep(d, snap(d.s), snap(d.e));
