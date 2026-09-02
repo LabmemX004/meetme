@@ -399,7 +399,8 @@ document.getElementById('days').addEventListener('pointerdown', e => {
       const r = blk.getBoundingClientRect();
       const relY = e.clientY - r.top;
       const row = rows.find(x => x.id === blk.dataset.id);
-      if (!row || row.is_fixed !== brush.fixed || row.week_start !== (brush.fixed ? FIXED_WEEK : isoDate(monday))) continue;
+      const scopeWk = brush.fixed ? FIXED_WEEK : isoDate(monday);
+      if (!row || row.is_fixed !== brush.fixed || row.week_start !== scopeWk) continue;
       if (relY >= 0 && relY <= 8) {                        // 上边缘：缩短 start
         startResize(row, 'start', day, dayRange);
         e.preventDefault();
@@ -427,17 +428,20 @@ document.getElementById('days').addEventListener('pointerdown', e => {
 });
 /* ---------- 色块上下边缘拖拽调时长 ---------- */
 let resize = null;
+function startResize(row, edge, day, rng) {
+  resize = { row, edge, day, rng };
+}
 window.addEventListener('pointermove', e => {
   if (!resize) return;
   const laneEl = document.querySelector(`.lane.mine[data-day="${resize.day}"]`);
   if (!laneEl) return;
   const rect = laneEl.getBoundingClientRect();
   const ppm = rect.height / 840;
-  const newMin = clamp(snap((e.clientY - rect.top) / ppm + 600), resize.row.status === 'busy' ? 0 : 0, END_HOUR * 60);
+  const newMin = snap((e.clientY - rect.top) / ppm + 600);
   if (resize.edge === 'start') {
-    resize.row.start_min = clamp(newMin, 0, resize.row.end_min - SNAP);
+    resize.row.start_min = clamp(newMin, resize.rng.min, resize.row.end_min - SNAP);
   } else {
-    resize.row.end_min = clamp(newMin, resize.row.start_min + SNAP, END_HOUR * 60);
+    resize.row.end_min = clamp(newMin, resize.row.start_min + SNAP, resize.rng.max);
   }
   renderBlocks();
 });
@@ -529,6 +533,19 @@ window.addEventListener('pointerup', e => {
   if (d.isMine && d.e > d.s) commitSweep(d, snap(d.s), snap(d.e));
 });
 window.addEventListener('pointercancel', () => { if (draw) { draw.ghost && draw.ghost.remove(); tip.hidden = true; draw = null; } });
+
+document.getElementById('days').addEventListener('dblclick', e => {
+  const blk = e.target.closest('.blk.mine');
+  if (!blk) return;
+  const id = blk.dataset.id;
+  if (!id) return;
+  const row = rows.find(r => r.id === id);
+  if (!row) return;
+  rows = rows.filter(r => r.id !== id);
+  renderBlocks();
+  db.remove([id]).catch(() => refresh());
+  toast('已删除');
+});
 
 function showGhost() {
   const d = draw;
