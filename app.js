@@ -516,17 +516,22 @@ window.addEventListener('scroll', debounce(() => {
   draw.e = clamp(Math.max(draw.e, cur), rng.min, rng.max);
   showGhost();
 }, 50));
+let clickTimer = null;
 window.addEventListener('pointerup', e => {
   if (!draw) return;
   const d = draw; draw = null;
   tip.hidden = true;
   if (d.ghost) d.ghost.remove();
-  if (!d.moved) {                                     // 单击：编辑块
+  if (!d.moved) {                                     // 单击：延迟到双击判定窗口后决定
     if (e.target.closest && e.target.closest('.lane')) {
       const rect = d.laneEl.getBoundingClientRect();
       const min = minOf(e.clientY - rect.top);
       const hit = blockAt(d.day, min, d.isMine ? 'mine' : 'theirs');
-      if (hit) openEditor(hit);
+      if (hit) {
+        const row = hit;
+        clearTimeout(clickTimer);
+        clickTimer = setTimeout(() => openEditor(row), 260);
+      }
     }
     return;
   }
@@ -537,10 +542,9 @@ window.addEventListener('pointercancel', () => { if (draw) { draw.ghost && draw.
 document.getElementById('days').addEventListener('dblclick', e => {
   const blk = e.target.closest('.blk.mine');
   if (!blk) return;
+  clearTimeout(clickTimer);           // 取消待触发的 openEditor
   const id = blk.dataset.id;
   if (!id) return;
-  const row = rows.find(r => r.id === id);
-  if (!row) return;
   rows = rows.filter(r => r.id !== id);
   renderBlocks();
   db.remove([id]).catch(() => refresh());
